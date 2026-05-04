@@ -1,0 +1,455 @@
+#include "curl_lv_internal.hpp"
+#include <curl/curl.h>
+#include <algorithm>
+#include <cstring>
+#include <string>
+#include <vector>
+
+std::atomic<bool> g_curl_global_initialized{false};
+
+int copy_c_string(const std::string& source, char* dest, int dest_size)
+{
+    if (!dest || dest_size <= 0)
+    {
+        return LV_CURL_ERROR_INVALID_ARGUMENT;
+    }
+
+    int required = static_cast<int>(source.size());
+    if (required >= dest_size)
+    {
+        if (dest_size > 0)
+        {
+            std::memcpy(dest, source.c_str(), dest_size - 1);
+            dest[dest_size - 1] = '\0';
+        }
+        return LV_CURL_ERROR_BUFFER_TOO_SMALL;
+    }
+
+    std::memcpy(dest, source.c_str(), required);
+    dest[required] = '\0';
+    return LV_CURL_SUCCESS;
+}
+
+int set_error_message(const std::string& source, char* error_buffer, int error_buffer_size)
+{
+    if (!error_buffer || error_buffer_size <= 0)
+    {
+        return LV_CURL_ERROR_INVALID_ARGUMENT;
+    }
+
+    if (source.empty())
+    {
+        error_buffer[0] = '\0';
+        return LV_CURL_SUCCESS;
+    }
+
+    return copy_c_string(source, error_buffer, error_buffer_size);
+}
+
+std::vector<std::string> split_header_lines(const char* headers)
+{
+    std::vector<std::string> result;
+    if (!headers)
+    {
+        return result;
+    }
+
+    std::string header_string(headers);
+    size_t position = 0;
+
+    while (position < header_string.size())
+    {
+        size_t end = header_string.find_first_of("\r\n", position);
+        std::string line;
+
+        if (end == std::string::npos)
+        {
+            line = header_string.substr(position);
+            position = header_string.size();
+        }
+        else
+        {
+            line = header_string.substr(position, end - position);
+            if (header_string[end] == '\r' && end + 1 < header_string.size() && header_string[end + 1] == '\n')
+            {
+                position = end + 2;
+            }
+            else
+            {
+                position = end + 1;
+            }
+        }
+
+        if (!line.empty())
+        {
+            result.push_back(line);
+        }
+    }
+
+    return result;
+}
+
+static size_t sync_write_callback(char* contents, size_t size, size_t nmemb, void* userdata)
+{
+    size_t total_size = size * nmemb;
+    auto* response = static_cast<std::string*>(userdata);
+    response->append(contents, total_size);
+    return total_size;
+}
+
+static int curl_to_error_code(CURLcode code)
+{
+    if (code == CURLE_OK)
+    {
+        return LV_CURL_SUCCESS;
+    }
+    return LV_CURL_ERROR_CURL;
+}
+
+static int internal_curl_request(
+    int method,
+    const char* url,
+    const char* headers,
+    const char* body,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code,
+    char* error_buffer,
+    int error_buffer_size)
+{
+    if (!url || !response_buffer || response_buffer_size <= 0 || !actual_response_size || !http_status_code || !error_buffer || error_buffer_size <= 0)
+    {
+        return LV_CURL_ERROR_INVALID_ARGUMENT;
+    }
+
+    if (!g_curl_global_initialized.load())
+    {
+        return set_error_message("curl_global_init has not been called.", error_buffer, error_buffer_size);
+    }
+
+    CURL* curl = curl_easy_init();
+    if (!curl)
+    {
+        return set_error_message("Unable to initialize libcurl.", error_buffer, error_buffer_size);
+    }
+
+    std::string response_data;
+    struct curl_slist* header_list = nullptr;
+    std::vector<std::string> header_lines = split_header_lines(headers);
+    for (const auto& header_line : header_lines)
+    {
+        header_list = curl_slist_append(header_list, header_line.c_str());
+        if (!header_list)
+        {
+            curl_easy_cleanup(curl);
+            return set_error_message("Failed to allocate libcurl header list.", error_buffer, error_buffer_size);
+        }
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, sync_write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+    switch (method)
+    {
+        case LV_CURL_METHOD_GET:
+            break;
+        case LV_CURL_METHOD_POST:
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            if (body)
+            {
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+            }
+            break;
+        case LV_CURL_METHOD_PUT:
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+            if (body)
+            {
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+            }
+            break;
+        case LV_CURL_METHOD_PATCH:
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PATCH");
+            if (body)
+            {
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+            }
+            break;
+        case LV_CURL_METHOD_DELETE:
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+            if (body)
+            {
+                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+            }
+            break;
+        case LV_CURL_METHOD_HEAD:
+            curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+            break;
+        case LV_CURL_METHOD_OPTIONS:
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "OPTIONS");
+            break;
+        default:
+            curl_slist_free_all(header_list);
+            curl_easy_cleanup(curl);
+            return set_error_message("Unsupported HTTP method.", error_buffer, error_buffer_size);
+    }
+
+    CURLcode result = curl_easy_perform(curl);
+    if (result != CURLE_OK)
+    {
+        std::string error_message = curl_easy_strerror(result);
+        curl_slist_free_all(header_list);
+        curl_easy_cleanup(curl);
+        int code = curl_to_error_code(result);
+        if (set_error_message(error_message, error_buffer, error_buffer_size) == LV_CURL_ERROR_BUFFER_TOO_SMALL)
+        {
+            return LV_CURL_ERROR_BUFFER_TOO_SMALL;
+        }
+        return code;
+    }
+
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, http_status_code);
+    curl_slist_free_all(header_list);
+    curl_easy_cleanup(curl);
+
+    *actual_response_size = static_cast<int>(response_data.size());
+
+    int copy_result = copy_c_string(response_data, response_buffer, response_buffer_size);
+    if (copy_result != LV_CURL_SUCCESS)
+    {
+        set_error_message("Response buffer too small.", error_buffer, error_buffer_size);
+        return LV_CURL_ERROR_BUFFER_TOO_SMALL;
+    }
+
+    error_buffer[0] = '\0';
+    return LV_CURL_SUCCESS;
+}
+
+int LV_CURL_CALL lv_curl_global_init(char* error_buffer, int error_buffer_size)
+{
+    try
+    {
+        if (!error_buffer || error_buffer_size <= 0)
+        {
+            return LV_CURL_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (g_curl_global_initialized.load())
+        {
+            error_buffer[0] = '\0';
+            return LV_CURL_SUCCESS;
+        }
+
+        CURLcode code = curl_global_init(CURL_GLOBAL_DEFAULT);
+        if (code != CURLE_OK)
+        {
+            return set_error_message(curl_easy_strerror(code), error_buffer, error_buffer_size);
+        }
+
+        g_curl_global_initialized.store(true);
+        error_buffer[0] = '\0';
+        return LV_CURL_SUCCESS;
+    }
+    catch (...)
+    {
+        return set_error_message("Unexpected exception in lv_curl_global_init.", error_buffer, error_buffer_size);
+    }
+}
+
+int LV_CURL_CALL lv_curl_global_cleanup(char* error_buffer, int error_buffer_size)
+{
+    try
+    {
+        if (!error_buffer || error_buffer_size <= 0)
+        {
+            return LV_CURL_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (!g_curl_global_initialized.load())
+        {
+            error_buffer[0] = '\0';
+            return LV_CURL_SUCCESS;
+        }
+
+        extern std::mutex g_async_mutex;
+        extern std::map<int, std::shared_ptr<AsyncRequest>> g_async_requests;
+
+        {
+            std::lock_guard<std::mutex> guard(g_async_mutex);
+            for (const auto& pair : g_async_requests)
+            {
+                if (pair.second && pair.second->state == LV_CURL_ASYNC_STATE_RUNNING)
+                {
+                    return set_error_message("Cannot cleanup while async requests are running.", error_buffer, error_buffer_size);
+                }
+            }
+        }
+
+        curl_global_cleanup();
+        g_curl_global_initialized.store(false);
+        error_buffer[0] = '\0';
+        return LV_CURL_SUCCESS;
+    }
+    catch (...)
+    {
+        return set_error_message("Unexpected exception in lv_curl_global_cleanup.", error_buffer, error_buffer_size);
+    }
+}
+
+const char* LV_CURL_CALL lv_curl_error_string(int error_code)
+{
+    switch (error_code)
+    {
+        case LV_CURL_SUCCESS: return "Success";
+        case LV_CURL_ERROR_INVALID_ARGUMENT: return "Invalid argument";
+        case LV_CURL_ERROR_INITIALIZATION: return "Initialization failure";
+        case LV_CURL_ERROR_CURL: return "libcurl error";
+        case LV_CURL_ERROR_BUFFER_TOO_SMALL: return "Buffer too small";
+        case LV_CURL_ERROR_NOT_FOUND: return "Not found";
+        case LV_CURL_ERROR_BUSY: return "Resource busy";
+        case LV_CURL_ERROR_CANCELLED: return "Request cancelled";
+        case LV_CURL_ERROR_INTERNAL: return "Internal error";
+        case LV_CURL_ERROR_ASYNC_NOT_FOUND: return "Async request not found";
+        case LV_CURL_ERROR_ASYNC_COMPLETE: return "Async request complete";
+        case LV_CURL_ERROR_ASYNC_NO_CHUNK: return "No async chunk available";
+        case LV_CURL_ERROR_ASYNC_FAILED: return "Async request failed";
+        default: return "Unknown error code";
+    }
+}
+
+int LV_CURL_CALL lv_curl_request(
+    int method,
+    const char* url,
+    const char* headers,
+    const char* body,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code,
+    char* error_buffer,
+    int error_buffer_size)
+{
+    try
+    {
+        return internal_curl_request(method, url, headers, body,
+            response_buffer, response_buffer_size, actual_response_size,
+            http_status_code, error_buffer, error_buffer_size);
+    }
+    catch (...)
+    {
+        return set_error_message("Unexpected exception in lv_curl_request.", error_buffer, error_buffer_size);
+    }
+}
+
+int LV_CURL_CALL lv_curl_get(
+    const char* url,
+    const char* headers,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code,
+    char* error_buffer,
+    int error_buffer_size)
+{
+    return lv_curl_request(LV_CURL_METHOD_GET, url, headers, nullptr,
+        response_buffer, response_buffer_size, actual_response_size,
+        http_status_code, error_buffer, error_buffer_size);
+}
+
+int LV_CURL_CALL lv_curl_post(
+    const char* url,
+    const char* headers,
+    const char* body,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code,
+    char* error_buffer,
+    int error_buffer_size)
+{
+    return lv_curl_request(LV_CURL_METHOD_POST, url, headers, body,
+        response_buffer, response_buffer_size, actual_response_size,
+        http_status_code, error_buffer, error_buffer_size);
+}
+
+int LV_CURL_CALL lv_curl_put(
+    const char* url,
+    const char* headers,
+    const char* body,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code,
+    char* error_buffer,
+    int error_buffer_size)
+{
+    return lv_curl_request(LV_CURL_METHOD_PUT, url, headers, body,
+        response_buffer, response_buffer_size, actual_response_size,
+        http_status_code, error_buffer, error_buffer_size);
+}
+
+int LV_CURL_CALL lv_curl_patch(
+    const char* url,
+    const char* headers,
+    const char* body,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code,
+    char* error_buffer,
+    int error_buffer_size)
+{
+    return lv_curl_request(LV_CURL_METHOD_PATCH, url, headers, body,
+        response_buffer, response_buffer_size, actual_response_size,
+        http_status_code, error_buffer, error_buffer_size);
+}
+
+int LV_CURL_CALL lv_curl_delete(
+    const char* url,
+    const char* headers,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code,
+    char* error_buffer,
+    int error_buffer_size)
+{
+    return lv_curl_request(LV_CURL_METHOD_DELETE, url, headers, nullptr,
+        response_buffer, response_buffer_size, actual_response_size,
+        http_status_code, error_buffer, error_buffer_size);
+}
+
+int LV_CURL_CALL lv_curl_head(
+    const char* url,
+    const char* headers,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code,
+    char* error_buffer,
+    int error_buffer_size)
+{
+    return lv_curl_request(LV_CURL_METHOD_HEAD, url, headers, nullptr,
+        response_buffer, response_buffer_size, actual_response_size,
+        http_status_code, error_buffer, error_buffer_size);
+}
+
+int LV_CURL_CALL lv_curl_options(
+    const char* url,
+    const char* headers,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code,
+    char* error_buffer,
+    int error_buffer_size)
+{
+    return lv_curl_request(LV_CURL_METHOD_OPTIONS, url, headers, nullptr,
+        response_buffer, response_buffer_size, actual_response_size,
+        http_status_code, error_buffer, error_buffer_size);
+}

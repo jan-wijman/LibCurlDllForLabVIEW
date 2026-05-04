@@ -1,0 +1,64 @@
+LabVIEW DLL Import Wizard settings
+===============================
+
+DLL Name: curl_lv.dll
+Calling convention: C
+Function names: Use exact names from the header.
+
+Example import signatures for LabVIEW:
+
+Return type: I32
+Parameters:
+- method: I32
+- url: C String
+- headers: C String
+- body: C String
+- response_buffer: C String
+- response_buffer_size: I32
+- actual_response_size: I32*
+- http_status_code: I32*
+- error_buffer: C String
+- error_buffer_size: I32
+
+For async start functions:
+- url: C String
+- headers: C String
+- body: C String (POST only)
+- request_id: I32*
+- error_buffer: C String
+- error_buffer_size: I32
+
+For async polling:
+- chunk_buffer: C String
+- chunk_buffer_size: I32
+- actual_chunk_size: I32*
+- is_last_chunk: I32*
+
+Polling flow example
+--------------------
+1. Call `lv_curl_global_init()` once.
+2. Call `lv_curl_async_get_start()` or `lv_curl_async_post_start()`.
+3. Loop:
+   a. Call `lv_curl_async_read_chunk()`.
+   b. If return value is `LV_CURL_SUCCESS`, append the chunk to your LabVIEW string.
+   c. If return value is `LV_CURL_ERROR_ASYNC_NO_CHUNK`, wait briefly and retry.
+   d. If return value is `LV_CURL_ERROR_ASYNC_COMPLETE`, the request finished and all data has been received.
+4. Optionally call `lv_curl_async_get_state()` to inspect the final state and HTTP status code.
+5. Call `lv_curl_global_cleanup()` when your application exits.
+
+Buffer management
+-----------------
+- Allocate response and error buffers large enough for expected strings.
+- If a buffer is too small, `LV_CURL_ERROR_BUFFER_TOO_SMALL` is returned.
+- The API returns the actual size of the output string in `actual_response_size`.
+
+Header formatting
+-----------------
+- Pass headers as a single string with one header per line.
+- Example:
+  "Accept: application/json\r\nUser-Agent: LabVIEW Wrapper\r\n"
+
+Bitness
+-------
+- Build 64-bit DLL for 64-bit LabVIEW.
+- Build 32-bit DLL for 32-bit LabVIEW.
