@@ -42,11 +42,25 @@ LV_CURL_API int LV_CURL_CALL lv_curl_global_init(char* error_buffer, int error_b
 LV_CURL_API int LV_CURL_CALL lv_curl_global_cleanup(char* error_buffer, int error_buffer_size);
 LV_CURL_API const char* LV_CURL_CALL lv_curl_error_string(int error_code);
 
+LV_CURL_API int LV_CURL_CALL lv_curl_open(
+    const char* url,
+    const char* headers,
+    const char* username,
+    const char* password,
+    const char* bearer_token,
+    int* reference,
+    char* error_buffer,
+    int error_buffer_size);
+
+LV_CURL_API int LV_CURL_CALL lv_curl_close(
+    int reference,
+    char* error_buffer,
+    int error_buffer_size);
+
 // Synchronous HTTP methods
 LV_CURL_API int LV_CURL_CALL lv_curl_request(
     int method,
-    const char* url,
-    const char* headers,
+    int reference,
     const char* body,
     char* response_buffer,
     int response_buffer_size,
@@ -56,8 +70,7 @@ LV_CURL_API int LV_CURL_CALL lv_curl_request(
     int error_buffer_size);
 
 LV_CURL_API int LV_CURL_CALL lv_curl_get(
-    const char* url,
-    const char* headers,
+    int reference,
     char* response_buffer,
     int response_buffer_size,
     int* actual_response_size,
@@ -66,8 +79,7 @@ LV_CURL_API int LV_CURL_CALL lv_curl_get(
     int error_buffer_size);
 
 LV_CURL_API int LV_CURL_CALL lv_curl_post(
-    const char* url,
-    const char* headers,
+    int reference,
     const char* body,
     char* response_buffer,
     int response_buffer_size,
@@ -77,8 +89,7 @@ LV_CURL_API int LV_CURL_CALL lv_curl_post(
     int error_buffer_size);
 
 LV_CURL_API int LV_CURL_CALL lv_curl_put(
-    const char* url,
-    const char* headers,
+    int reference,
     const char* body,
     char* response_buffer,
     int response_buffer_size,
@@ -88,8 +99,7 @@ LV_CURL_API int LV_CURL_CALL lv_curl_put(
     int error_buffer_size);
 
 LV_CURL_API int LV_CURL_CALL lv_curl_patch(
-    const char* url,
-    const char* headers,
+    int reference,
     const char* body,
     char* response_buffer,
     int response_buffer_size,
@@ -99,8 +109,7 @@ LV_CURL_API int LV_CURL_CALL lv_curl_patch(
     int error_buffer_size);
 
 LV_CURL_API int LV_CURL_CALL lv_curl_delete(
-    const char* url,
-    const char* headers,
+    int reference,
     char* response_buffer,
     int response_buffer_size,
     int* actual_response_size,
@@ -109,8 +118,7 @@ LV_CURL_API int LV_CURL_CALL lv_curl_delete(
     int error_buffer_size);
 
 LV_CURL_API int LV_CURL_CALL lv_curl_head(
-    const char* url,
-    const char* headers,
+    int reference,
     char* response_buffer,
     int response_buffer_size,
     int* actual_response_size,
@@ -119,8 +127,7 @@ LV_CURL_API int LV_CURL_CALL lv_curl_head(
     int error_buffer_size);
 
 LV_CURL_API int LV_CURL_CALL lv_curl_options(
-    const char* url,
-    const char* headers,
+    int reference,
     char* response_buffer,
     int response_buffer_size,
     int* actual_response_size,
@@ -130,15 +137,13 @@ LV_CURL_API int LV_CURL_CALL lv_curl_options(
 
 // Async API
 LV_CURL_API int LV_CURL_CALL lv_curl_async_get_start(
-    const char* url,
-    const char* headers,
+    int reference,
     int* request_id,
     char* error_buffer,
     int error_buffer_size);
 
 LV_CURL_API int LV_CURL_CALL lv_curl_async_post_start(
-    const char* url,
-    const char* headers,
+    int reference,
     const char* body,
     int* request_id,
     char* error_buffer,

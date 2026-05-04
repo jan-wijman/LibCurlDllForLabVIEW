@@ -11,6 +11,7 @@ Supported features
 - `extern "C"` exports with `__cdecl` calling convention
 - Stable integer error codes and caller-supplied buffers
 - No C++/STL or libcurl types in the public API
+- Open/close reference lifecycle for URL and authentication reuse
 - Generic sync request plus convenience wrappers
 - Async GET and POST with worker threads and chunk polling
 - Safe libcurl global init/cleanup
@@ -71,11 +72,24 @@ LabVIEW notes
 Async polling usage
 -------------------
 1. Call `lv_curl_global_init()` once.
-2. Start an async request with `lv_curl_async_get_start()` or `lv_curl_async_post_start()`.
-3. Poll `lv_curl_async_read_chunk()` repeatedly until it returns `LV_CURL_ERROR_ASYNC_COMPLETE`.
-4. Optionally check state with `lv_curl_async_get_state()`.
-5. Call `lv_curl_async_cancel()` to abort a running request.
-6. Call `lv_curl_global_cleanup()` when the app shuts down.
+2. Call `lv_curl_open()` with the URL, default headers, and authentication info to get an I32 reference.
+3. Start an async request with `lv_curl_async_get_start(reference, ...)` or `lv_curl_async_post_start(reference, ...)`.
+4. Poll `lv_curl_async_read_chunk()` repeatedly until it returns `LV_CURL_ERROR_ASYNC_COMPLETE`.
+5. Optionally check state with `lv_curl_async_get_state()`.
+6. Call `lv_curl_async_cancel()` to abort a running request.
+7. Call `lv_curl_close(reference, ...)` when the URL/auth context is no longer needed.
+8. Call `lv_curl_global_cleanup()` when the app shuts down.
+
+Reference lifecycle
+-------------------
+`lv_curl_open()` stores:
+- URL
+- default headers, one per line
+- username/password for basic or negotiated libcurl authentication
+- bearer token, added as `Authorization: Bearer <token>`
+
+All sync calls and async start calls now take the returned I32 reference instead of URL/header strings.
+`lv_curl_close()` removes the reference. Closing fails with `LV_CURL_ERROR_BUSY` while an async request for that reference is still running.
 
 Project files
 -------------

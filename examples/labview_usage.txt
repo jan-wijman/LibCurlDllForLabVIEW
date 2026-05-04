@@ -7,11 +7,30 @@ Function names: Use exact names from the header.
 
 Example import signatures for LabVIEW:
 
+For opening a URL/auth reference:
+Return type: I32
+Parameters:
+- url: C String
+- headers: C String
+- username: C String
+- password: C String
+- bearer_token: C String
+- reference: I32*
+- error_buffer: C String
+- error_buffer_size: I32
+
+For closing a reference:
+Return type: I32
+Parameters:
+- reference: I32
+- error_buffer: C String
+- error_buffer_size: I32
+
+For sync request functions:
 Return type: I32
 Parameters:
 - method: I32
-- url: C String
-- headers: C String
+- reference: I32
 - body: C String
 - response_buffer: C String
 - response_buffer_size: I32
@@ -21,8 +40,7 @@ Parameters:
 - error_buffer_size: I32
 
 For async start functions:
-- url: C String
-- headers: C String
+- reference: I32
 - body: C String (POST only)
 - request_id: I32*
 - error_buffer: C String
@@ -37,14 +55,16 @@ For async polling:
 Polling flow example
 --------------------
 1. Call `lv_curl_global_init()` once.
-2. Call `lv_curl_async_get_start()` or `lv_curl_async_post_start()`.
-3. Loop:
+2. Call `lv_curl_open()` with URL, default headers, username, password, and/or bearer token.
+3. Call `lv_curl_async_get_start(reference, ...)` or `lv_curl_async_post_start(reference, ...)`.
+4. Loop:
    a. Call `lv_curl_async_read_chunk()`.
    b. If return value is `LV_CURL_SUCCESS`, append the chunk to your LabVIEW string.
    c. If return value is `LV_CURL_ERROR_ASYNC_NO_CHUNK`, wait briefly and retry.
    d. If return value is `LV_CURL_ERROR_ASYNC_COMPLETE`, the request finished and all data has been received.
-4. Optionally call `lv_curl_async_get_state()` to inspect the final state and HTTP status code.
-5. Call `lv_curl_global_cleanup()` when your application exits.
+5. Optionally call `lv_curl_async_get_state()` to inspect the final state and HTTP status code.
+6. Call `lv_curl_close(reference, ...)`.
+7. Call `lv_curl_global_cleanup()` when your application exits.
 
 Buffer management
 -----------------
@@ -54,9 +74,15 @@ Buffer management
 
 Header formatting
 -----------------
-- Pass headers as a single string with one header per line.
+- Pass default headers to `lv_curl_open()` as a single string with one header per line.
 - Example:
   "Accept: application/json\r\nUser-Agent: LabVIEW Wrapper\r\n"
+
+Authentication
+--------------
+- For basic or negotiated libcurl authentication, pass username and password to `lv_curl_open()`.
+- For bearer-token authentication, pass the token without the `Bearer ` prefix to `lv_curl_open()`.
+- Pass empty strings for unused authentication fields.
 
 Bitness
 -------

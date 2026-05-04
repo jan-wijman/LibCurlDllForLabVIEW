@@ -2,6 +2,7 @@
 #include <curl/curl.h>
 #include <chrono>
 #include <cstring>
+#include <shared_mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -72,15 +73,15 @@ static size_t async_write_callback(char* contents, size_t size, size_t nmemb, vo
     return total_size;
 }
 
-void start_async_request(int request_id, const std::string& url, const std::vector<std::string>& headers, const std::string& body, bool use_post)
+void start_async_request(int request_id, std::shared_ptr<CurlConnection> connection, const std::string& body, bool use_post)
 {
     auto request = find_async_request(request_id);
-    if (!request)
+    if (!request || !connection)
     {
         return;
     }
 
-    std::thread worker([request, url, headers, body, use_post]() {
+    std::thread worker([request, connection, body, use_post]() {
         CURL* curl = curl_easy_init();
         if (!curl)
         {
@@ -93,7 +94,7 @@ void start_async_request(int request_id, const std::string& url, const std::vect
         }
 
         struct curl_slist* header_list = nullptr;
-        for (const auto& header_line : headers)
+        for (const auto& header_line : connection->headers)
         {
             header_list = curl_slist_append(header_list, header_line.c_str());
             if (!header_list)
@@ -108,7 +109,23 @@ void start_async_request(int request_id, const std::string& url, const std::vect
             }
         }
 
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        if (!connection->bearer_token.empty())
+        {
+            std::string auth_header = "Authorization: Bearer " + connection->bearer_token;
+            header_list = curl_slist_append(header_list, auth_header.c_str());
+            if (!header_list)
+            {
+                curl_easy_cleanup(curl);
+                std::lock_guard<std::mutex> guard(request->mutex);
+                request->failed = true;
+                request->state = LV_CURL_ASYNC_STATE_FAILED;
+                request->error_message = "Failed to allocate libcurl header list.";
+                request->cv.notify_all();
+                return;
+            }
+        }
+
+        curl_easy_setopt(curl, CURLOPT_URL, connection->url.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, async_write_callback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, request.get());
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
@@ -117,6 +134,12 @@ void start_async_request(int request_id, const std::string& url, const std::vect
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, async_progress_callback);
         curl_easy_setopt(curl, CURLOPT_XFERINFODATA, request.get());
         curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+        if (!connection->username.empty())
+        {
+            curl_easy_setopt(curl, CURLOPT_USERNAME, connection->username.c_str());
+            curl_easy_setopt(curl, CURLOPT_PASSWORD, connection->password.c_str());
+        }
 
         if (use_post)
         {
@@ -135,6 +158,9 @@ void start_async_request(int request_id, const std::string& url, const std::vect
         CURLcode result = curl_easy_perform(curl);
         long status_code = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
+
+        curl_slist_free_all(header_list);
+        curl_easy_cleanup(curl);
 
         {
             std::lock_guard<std::mutex> guard(request->mutex);
@@ -157,8 +183,6 @@ void start_async_request(int request_id, const std::string& url, const std::vect
         }
 
         request->cv.notify_all();
-        curl_slist_free_all(header_list);
-        curl_easy_cleanup(curl);
     });
 
     worker.detach();
@@ -174,33 +198,44 @@ static int validate_async_buffer_args(char* buffer, int buffer_size, int* actual
 }
 
 int LV_CURL_CALL lv_curl_async_get_start(
-    const char* url,
-    const char* headers,
+    int reference,
     int* request_id,
     char* error_buffer,
     int error_buffer_size)
 {
     try
     {
-        if (!url || !request_id || !error_buffer || error_buffer_size <= 0)
+        if (reference <= 0 || !request_id || !error_buffer || error_buffer_size <= 0)
         {
             return LV_CURL_ERROR_INVALID_ARGUMENT;
         }
 
+        std::shared_lock<std::shared_mutex> lifecycle_guard(g_lifecycle_mutex);
+
         if (!g_curl_global_initialized.load())
         {
-            return set_error_message("curl_global_init has not been called.", error_buffer, error_buffer_size);
+            set_error_message("curl_global_init has not been called.", error_buffer, error_buffer_size);
+            return LV_CURL_ERROR_INITIALIZATION;
+        }
+
+        auto connection = find_connection(reference);
+        if (!connection)
+        {
+            set_error_message("Reference not found.", error_buffer, error_buffer_size);
+            return LV_CURL_ERROR_NOT_FOUND;
         }
 
         int id;
         int code = reserve_async_request_id(&id);
         if (code != LV_CURL_SUCCESS)
         {
-            return set_error_message("Unable to reserve async request id.", error_buffer, error_buffer_size);
+            set_error_message("Unable to reserve async request id.", error_buffer, error_buffer_size);
+            return code;
         }
 
         auto request = std::make_shared<AsyncRequest>();
         request->id = id;
+        request->reference = reference;
         request->state = LV_CURL_ASYNC_STATE_RUNNING;
 
         {
@@ -208,8 +243,7 @@ int LV_CURL_CALL lv_curl_async_get_start(
             g_async_requests[id] = request;
         }
 
-        std::vector<std::string> header_lines = split_header_lines(headers);
-        start_async_request(id, url, header_lines, std::string(), false);
+        start_async_request(id, connection, std::string(), false);
 
         *request_id = id;
         error_buffer[0] = '\0';
@@ -222,8 +256,7 @@ int LV_CURL_CALL lv_curl_async_get_start(
 }
 
 int LV_CURL_CALL lv_curl_async_post_start(
-    const char* url,
-    const char* headers,
+    int reference,
     const char* body,
     int* request_id,
     char* error_buffer,
@@ -231,25 +264,37 @@ int LV_CURL_CALL lv_curl_async_post_start(
 {
     try
     {
-        if (!url || !request_id || !error_buffer || error_buffer_size <= 0)
+        if (reference <= 0 || !request_id || !error_buffer || error_buffer_size <= 0)
         {
             return LV_CURL_ERROR_INVALID_ARGUMENT;
         }
 
+        std::shared_lock<std::shared_mutex> lifecycle_guard(g_lifecycle_mutex);
+
         if (!g_curl_global_initialized.load())
         {
-            return set_error_message("curl_global_init has not been called.", error_buffer, error_buffer_size);
+            set_error_message("curl_global_init has not been called.", error_buffer, error_buffer_size);
+            return LV_CURL_ERROR_INITIALIZATION;
+        }
+
+        auto connection = find_connection(reference);
+        if (!connection)
+        {
+            set_error_message("Reference not found.", error_buffer, error_buffer_size);
+            return LV_CURL_ERROR_NOT_FOUND;
         }
 
         int id;
         int code = reserve_async_request_id(&id);
         if (code != LV_CURL_SUCCESS)
         {
-            return set_error_message("Unable to reserve async request id.", error_buffer, error_buffer_size);
+            set_error_message("Unable to reserve async request id.", error_buffer, error_buffer_size);
+            return code;
         }
 
         auto request = std::make_shared<AsyncRequest>();
         request->id = id;
+        request->reference = reference;
         request->state = LV_CURL_ASYNC_STATE_RUNNING;
 
         {
@@ -257,8 +302,7 @@ int LV_CURL_CALL lv_curl_async_post_start(
             g_async_requests[id] = request;
         }
 
-        std::vector<std::string> header_lines = split_header_lines(headers);
-        start_async_request(id, url, header_lines, body ? std::string(body) : std::string(), true);
+        start_async_request(id, connection, body ? std::string(body) : std::string(), true);
 
         *request_id = id;
         error_buffer[0] = '\0';
