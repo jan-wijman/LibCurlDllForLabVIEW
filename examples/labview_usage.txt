@@ -11,7 +11,7 @@ For opening a URL/auth reference:
 Return type: I32
 Parameters:
 - url: C String
-- headers: C String
+- headers: C String (default headers)
 - username: C String
 - password: C String
 - bearer_token: C String
@@ -26,11 +26,21 @@ Parameters:
 - error_buffer: C String
 - error_buffer_size: I32
 
+For getting common header templates:
+Return type: I32
+Parameters:
+- headers_buffer: C String
+- headers_buffer_size: I32
+- actual_headers_size: I32*
+- error_buffer: C String
+- error_buffer_size: I32
+
 For sync request functions:
 Return type: I32
 Parameters:
 - method: I32
 - reference: I32
+- headers: C String (optional request headers)
 - body: C String
 - response_buffer: C String
 - response_buffer_size: I32
@@ -41,6 +51,7 @@ Parameters:
 
 For async start functions:
 - reference: I32
+- headers: C String (optional request headers)
 - body: C String (POST only)
 - request_id: I32*
 - error_buffer: C String
@@ -56,7 +67,7 @@ Polling flow example
 --------------------
 1. Call `lv_curl_global_init()` once.
 2. Call `lv_curl_open()` with URL, default headers, username, password, and/or bearer token.
-3. Call `lv_curl_async_get_start(reference, ...)` or `lv_curl_async_post_start(reference, ...)`.
+3. Call `lv_curl_async_get_start(reference, optional_headers, ...)` or `lv_curl_async_post_start(reference, optional_headers, ...)`.
 4. Loop:
    a. Call `lv_curl_async_read_chunk()`.
    b. If return value is `LV_CURL_SUCCESS`, append the chunk to your LabVIEW string.
@@ -75,6 +86,10 @@ Buffer management
 Header formatting
 -----------------
 - Pass default headers to `lv_curl_open()` as a single string with one header per line.
+- Pass optional request headers to sync calls and async start calls the same way.
+- Pass an empty string when a specific request does not need extra headers.
+- `lv_curl_get_header_templates()` returns common header templates as one string with one header per line.
+- The templates are examples; replace placeholder values like `<token>` and `<key>` before using them.
 - Example:
   "Accept: application/json\r\nUser-Agent: LabVIEW Wrapper\r\n"
 

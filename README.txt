@@ -68,12 +68,13 @@ LabVIEW notes
 - The wrapper functions use `__cdecl` convention.
 - All string outputs require caller-managed buffers plus buffer sizes.
 - Validate and size buffers before calling.
+- `lv_curl_get_header_templates()` returns common HTTP header templates for LabVIEW UI lists or examples.
 
 Async polling usage
 -------------------
 1. Call `lv_curl_global_init()` once.
 2. Call `lv_curl_open()` with the URL, default headers, and authentication info to get an I32 reference.
-3. Start an async request with `lv_curl_async_get_start(reference, ...)` or `lv_curl_async_post_start(reference, ...)`.
+3. Start an async request with `lv_curl_async_get_start(reference, optional_headers, ...)` or `lv_curl_async_post_start(reference, optional_headers, ...)`.
 4. Poll `lv_curl_async_read_chunk()` repeatedly until it returns `LV_CURL_ERROR_ASYNC_COMPLETE`.
 5. Optionally check state with `lv_curl_async_get_state()`.
 6. Call `lv_curl_async_cancel()` to abort a running request.
@@ -88,7 +89,10 @@ Reference lifecycle
 - username/password for basic or negotiated libcurl authentication
 - bearer token, added as `Authorization: Bearer <token>`
 
-All sync calls and async start calls now take the returned I32 reference instead of URL/header strings.
+All sync calls and async start calls take the returned I32 reference plus optional request headers.
+The request headers are appended after the default headers stored by `lv_curl_open()`.
+Pass an empty string when a specific request does not need extra headers.
+`lv_curl_get_header_templates()` returns common header templates; replace placeholder values before sending them.
 `lv_curl_close()` removes the reference. Closing fails with `LV_CURL_ERROR_BUSY` while an async request for that reference is still running.
 
 Project files

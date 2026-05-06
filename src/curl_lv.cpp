@@ -123,17 +123,38 @@ std::shared_ptr<CurlConnection> find_connection(int reference)
     return it->second;
 }
 
-static int configure_connection(CURL* curl, const CurlConnection& connection, struct curl_slist** header_list)
+static int append_header_lines(struct curl_slist** header_list, const std::vector<std::string>& header_lines)
 {
-    curl_easy_setopt(curl, CURLOPT_URL, connection.url.c_str());
-
-    for (const auto& header_line : connection.headers)
+    for (const auto& header_line : header_lines)
     {
         *header_list = curl_slist_append(*header_list, header_line.c_str());
         if (!*header_list)
         {
             return LV_CURL_ERROR_INITIALIZATION;
         }
+    }
+
+    return LV_CURL_SUCCESS;
+}
+
+static int configure_connection(
+    CURL* curl,
+    const CurlConnection& connection,
+    const std::vector<std::string>& request_headers,
+    struct curl_slist** header_list)
+{
+    curl_easy_setopt(curl, CURLOPT_URL, connection.url.c_str());
+
+    int append_result = append_header_lines(header_list, connection.headers);
+    if (append_result != LV_CURL_SUCCESS)
+    {
+        return append_result;
+    }
+
+    append_result = append_header_lines(header_list, request_headers);
+    if (append_result != LV_CURL_SUCCESS)
+    {
+        return append_result;
     }
 
     if (!connection.bearer_token.empty())
@@ -158,6 +179,7 @@ static int configure_connection(CURL* curl, const CurlConnection& connection, st
 static int internal_curl_request(
     int method,
     int reference,
+    const char* headers,
     const char* body,
     char* response_buffer,
     int response_buffer_size,
@@ -193,7 +215,8 @@ static int internal_curl_request(
 
     std::string response_data;
     struct curl_slist* header_list = nullptr;
-    int configure_result = configure_connection(curl, *connection, &header_list);
+    std::vector<std::string> request_headers = split_header_lines(headers);
+    int configure_result = configure_connection(curl, *connection, request_headers, &header_list);
     if (configure_result != LV_CURL_SUCCESS)
     {
         curl_slist_free_all(header_list);
@@ -488,9 +511,61 @@ int LV_CURL_CALL lv_curl_close(int reference, char* error_buffer, int error_buff
     }
 }
 
+int LV_CURL_CALL lv_curl_get_header_templates(
+    char* headers_buffer,
+    int headers_buffer_size,
+    int* actual_headers_size,
+    char* error_buffer,
+    int error_buffer_size)
+{
+    try
+    {
+        if (!headers_buffer || headers_buffer_size <= 0 || !actual_headers_size || !error_buffer || error_buffer_size <= 0)
+        {
+            return LV_CURL_ERROR_INVALID_ARGUMENT;
+        }
+
+        static const char* header_templates =
+            "Accept: application/json\r\n"
+            "Accept: text/plain\r\n"
+            "Accept: */*\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Type: application/x-www-form-urlencoded\r\n"
+            "Content-Type: text/plain\r\n"
+            "Authorization: Bearer <token>\r\n"
+            "Authorization: Basic <base64-credentials>\r\n"
+            "User-Agent: LabVIEW curl_lv\r\n"
+            "Cache-Control: no-cache\r\n"
+            "If-Match: <etag>\r\n"
+            "If-None-Match: <etag>\r\n"
+            "If-Modified-Since: <http-date>\r\n"
+            "Range: bytes=<start>-<end>\r\n"
+            "Cookie: <name>=<value>\r\n"
+            "X-API-Key: <key>\r\n";
+
+        std::string templates(header_templates);
+        *actual_headers_size = static_cast<int>(templates.size());
+
+        int copy_result = copy_c_string(templates, headers_buffer, headers_buffer_size);
+        if (copy_result != LV_CURL_SUCCESS)
+        {
+            set_error_message("Header template buffer too small.", error_buffer, error_buffer_size);
+            return copy_result;
+        }
+
+        error_buffer[0] = '\0';
+        return LV_CURL_SUCCESS;
+    }
+    catch (...)
+    {
+        return set_error_message("Unexpected exception in lv_curl_get_header_templates.", error_buffer, error_buffer_size);
+    }
+}
+
 int LV_CURL_CALL lv_curl_request(
     int method,
     int reference,
+    const char* headers,
     const char* body,
     char* response_buffer,
     int response_buffer_size,
@@ -501,7 +576,7 @@ int LV_CURL_CALL lv_curl_request(
 {
     try
     {
-        return internal_curl_request(method, reference, body,
+        return internal_curl_request(method, reference, headers, body,
             response_buffer, response_buffer_size, actual_response_size,
             http_status_code, error_buffer, error_buffer_size);
     }
@@ -513,6 +588,7 @@ int LV_CURL_CALL lv_curl_request(
 
 int LV_CURL_CALL lv_curl_get(
     int reference,
+    const char* headers,
     char* response_buffer,
     int response_buffer_size,
     int* actual_response_size,
@@ -520,13 +596,14 @@ int LV_CURL_CALL lv_curl_get(
     char* error_buffer,
     int error_buffer_size)
 {
-    return lv_curl_request(LV_CURL_METHOD_GET, reference, nullptr,
+    return lv_curl_request(LV_CURL_METHOD_GET, reference, headers, nullptr,
         response_buffer, response_buffer_size, actual_response_size,
         http_status_code, error_buffer, error_buffer_size);
 }
 
 int LV_CURL_CALL lv_curl_post(
     int reference,
+    const char* headers,
     const char* body,
     char* response_buffer,
     int response_buffer_size,
@@ -535,13 +612,14 @@ int LV_CURL_CALL lv_curl_post(
     char* error_buffer,
     int error_buffer_size)
 {
-    return lv_curl_request(LV_CURL_METHOD_POST, reference, body,
+    return lv_curl_request(LV_CURL_METHOD_POST, reference, headers, body,
         response_buffer, response_buffer_size, actual_response_size,
         http_status_code, error_buffer, error_buffer_size);
 }
 
 int LV_CURL_CALL lv_curl_put(
     int reference,
+    const char* headers,
     const char* body,
     char* response_buffer,
     int response_buffer_size,
@@ -550,13 +628,14 @@ int LV_CURL_CALL lv_curl_put(
     char* error_buffer,
     int error_buffer_size)
 {
-    return lv_curl_request(LV_CURL_METHOD_PUT, reference, body,
+    return lv_curl_request(LV_CURL_METHOD_PUT, reference, headers, body,
         response_buffer, response_buffer_size, actual_response_size,
         http_status_code, error_buffer, error_buffer_size);
 }
 
 int LV_CURL_CALL lv_curl_patch(
     int reference,
+    const char* headers,
     const char* body,
     char* response_buffer,
     int response_buffer_size,
@@ -565,13 +644,14 @@ int LV_CURL_CALL lv_curl_patch(
     char* error_buffer,
     int error_buffer_size)
 {
-    return lv_curl_request(LV_CURL_METHOD_PATCH, reference, body,
+    return lv_curl_request(LV_CURL_METHOD_PATCH, reference, headers, body,
         response_buffer, response_buffer_size, actual_response_size,
         http_status_code, error_buffer, error_buffer_size);
 }
 
 int LV_CURL_CALL lv_curl_delete(
     int reference,
+    const char* headers,
     char* response_buffer,
     int response_buffer_size,
     int* actual_response_size,
@@ -579,13 +659,14 @@ int LV_CURL_CALL lv_curl_delete(
     char* error_buffer,
     int error_buffer_size)
 {
-    return lv_curl_request(LV_CURL_METHOD_DELETE, reference, nullptr,
+    return lv_curl_request(LV_CURL_METHOD_DELETE, reference, headers, nullptr,
         response_buffer, response_buffer_size, actual_response_size,
         http_status_code, error_buffer, error_buffer_size);
 }
 
 int LV_CURL_CALL lv_curl_head(
     int reference,
+    const char* headers,
     char* response_buffer,
     int response_buffer_size,
     int* actual_response_size,
@@ -593,13 +674,14 @@ int LV_CURL_CALL lv_curl_head(
     char* error_buffer,
     int error_buffer_size)
 {
-    return lv_curl_request(LV_CURL_METHOD_HEAD, reference, nullptr,
+    return lv_curl_request(LV_CURL_METHOD_HEAD, reference, headers, nullptr,
         response_buffer, response_buffer_size, actual_response_size,
         http_status_code, error_buffer, error_buffer_size);
 }
 
 int LV_CURL_CALL lv_curl_options(
     int reference,
+    const char* headers,
     char* response_buffer,
     int response_buffer_size,
     int* actual_response_size,
@@ -607,7 +689,7 @@ int LV_CURL_CALL lv_curl_options(
     char* error_buffer,
     int error_buffer_size)
 {
-    return lv_curl_request(LV_CURL_METHOD_OPTIONS, reference, nullptr,
+    return lv_curl_request(LV_CURL_METHOD_OPTIONS, reference, headers, nullptr,
         response_buffer, response_buffer_size, actual_response_size,
         http_status_code, error_buffer, error_buffer_size);
 }

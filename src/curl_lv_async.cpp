@@ -73,7 +73,26 @@ static size_t async_write_callback(char* contents, size_t size, size_t nmemb, vo
     return total_size;
 }
 
-void start_async_request(int request_id, std::shared_ptr<CurlConnection> connection, const std::string& body, bool use_post)
+static int append_header_lines(struct curl_slist** header_list, const std::vector<std::string>& header_lines)
+{
+    for (const auto& header_line : header_lines)
+    {
+        *header_list = curl_slist_append(*header_list, header_line.c_str());
+        if (!*header_list)
+        {
+            return LV_CURL_ERROR_INITIALIZATION;
+        }
+    }
+
+    return LV_CURL_SUCCESS;
+}
+
+void start_async_request(
+    int request_id,
+    std::shared_ptr<CurlConnection> connection,
+    std::vector<std::string> request_headers,
+    const std::string& body,
+    bool use_post)
 {
     auto request = find_async_request(request_id);
     if (!request || !connection)
@@ -81,7 +100,7 @@ void start_async_request(int request_id, std::shared_ptr<CurlConnection> connect
         return;
     }
 
-    std::thread worker([request, connection, body, use_post]() {
+    std::thread worker([request, connection, request_headers, body, use_post]() {
         CURL* curl = curl_easy_init();
         if (!curl)
         {
@@ -94,19 +113,29 @@ void start_async_request(int request_id, std::shared_ptr<CurlConnection> connect
         }
 
         struct curl_slist* header_list = nullptr;
-        for (const auto& header_line : connection->headers)
+        int append_result = append_header_lines(&header_list, connection->headers);
+        if (append_result != LV_CURL_SUCCESS)
         {
-            header_list = curl_slist_append(header_list, header_line.c_str());
-            if (!header_list)
-            {
-                curl_easy_cleanup(curl);
-                std::lock_guard<std::mutex> guard(request->mutex);
-                request->failed = true;
-                request->state = LV_CURL_ASYNC_STATE_FAILED;
-                request->error_message = "Failed to allocate libcurl header list.";
-                request->cv.notify_all();
-                return;
-            }
+            curl_easy_cleanup(curl);
+            std::lock_guard<std::mutex> guard(request->mutex);
+            request->failed = true;
+            request->state = LV_CURL_ASYNC_STATE_FAILED;
+            request->error_message = "Failed to allocate libcurl header list.";
+            request->cv.notify_all();
+            return;
+        }
+
+        append_result = append_header_lines(&header_list, request_headers);
+        if (append_result != LV_CURL_SUCCESS)
+        {
+            curl_slist_free_all(header_list);
+            curl_easy_cleanup(curl);
+            std::lock_guard<std::mutex> guard(request->mutex);
+            request->failed = true;
+            request->state = LV_CURL_ASYNC_STATE_FAILED;
+            request->error_message = "Failed to allocate libcurl header list.";
+            request->cv.notify_all();
+            return;
         }
 
         if (!connection->bearer_token.empty())
@@ -199,6 +228,7 @@ static int validate_async_buffer_args(char* buffer, int buffer_size, int* actual
 
 int LV_CURL_CALL lv_curl_async_get_start(
     int reference,
+    const char* headers,
     int* request_id,
     char* error_buffer,
     int error_buffer_size)
@@ -243,7 +273,8 @@ int LV_CURL_CALL lv_curl_async_get_start(
             g_async_requests[id] = request;
         }
 
-        start_async_request(id, connection, std::string(), false);
+        std::vector<std::string> request_headers = split_header_lines(headers);
+        start_async_request(id, connection, request_headers, std::string(), false);
 
         *request_id = id;
         error_buffer[0] = '\0';
@@ -257,6 +288,7 @@ int LV_CURL_CALL lv_curl_async_get_start(
 
 int LV_CURL_CALL lv_curl_async_post_start(
     int reference,
+    const char* headers,
     const char* body,
     int* request_id,
     char* error_buffer,
@@ -302,7 +334,8 @@ int LV_CURL_CALL lv_curl_async_post_start(
             g_async_requests[id] = request;
         }
 
-        start_async_request(id, connection, body ? std::string(body) : std::string(), true);
+        std::vector<std::string> request_headers = split_header_lines(headers);
+        start_async_request(id, connection, request_headers, body ? std::string(body) : std::string(), true);
 
         *request_id = id;
         error_buffer[0] = '\0';

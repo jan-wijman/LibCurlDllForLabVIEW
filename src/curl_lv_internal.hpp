@@ -55,4 +55,9 @@ extern std::atomic<int> g_next_request_id;
 int reserve_async_request_id(int* request_id);
 std::shared_ptr<AsyncRequest> find_async_request(int request_id);
 
-void start_async_request(int request_id, std::shared_ptr<CurlConnection> connection, const std::string& body, bool use_post);
+void start_async_request(
+    int request_id,
+    std::shared_ptr<CurlConnection> connection,
+    std::vector<std::string> request_headers,
+    const std::string& body,
+    bool use_post);
