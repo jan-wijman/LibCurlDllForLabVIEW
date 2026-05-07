@@ -40,6 +40,7 @@ Return type: I32
 Parameters:
 - method: I32
 - reference: I32
+- endpoint: C String
 - headers: C String (optional request headers)
 - body: C String
 - response_buffer: C String
@@ -51,6 +52,7 @@ Parameters:
 
 For async start functions:
 - reference: I32
+- endpoint: C String
 - headers: C String (optional request headers)
 - body: C String (POST only)
 - request_id: I32*
@@ -66,8 +68,8 @@ For async polling:
 Polling flow example
 --------------------
 1. Call `lv_curl_global_init()` once.
-2. Call `lv_curl_open()` with URL, default headers, username, password, and/or bearer token.
-3. Call `lv_curl_async_get_start(reference, optional_headers, ...)` or `lv_curl_async_post_start(reference, optional_headers, ...)`.
+2. Call `lv_curl_open()` with base URL, default headers, username, password, and/or bearer token.
+3. Call `lv_curl_async_get_start(reference, endpoint, optional_headers, ...)` or `lv_curl_async_post_start(reference, endpoint, optional_headers, ...)`.
 4. Loop:
    a. Call `lv_curl_async_read_chunk()`.
    b. If return value is `LV_CURL_SUCCESS`, append the chunk to your LabVIEW string.
@@ -92,6 +94,13 @@ Header formatting
 - The templates are examples; replace placeholder values like `<token>` and `<key>` before using them.
 - Example:
   "Accept: application/json\r\nUser-Agent: LabVIEW Wrapper\r\n"
+
+Endpoint formatting
+-------------------
+- Pass the base URL to `lv_curl_open()`, for example `"https://example.com:8443/api"`.
+- Pass the endpoint to sync calls and async start calls, for example `"items"` or `"/items"`.
+- Empty endpoint uses the base URL as-is.
+- A full `http://` or `https://` endpoint overrides the base URL for that request.
 
 Authentication
 --------------

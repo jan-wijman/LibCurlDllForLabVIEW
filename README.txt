@@ -73,8 +73,8 @@ LabVIEW notes
 Async polling usage
 -------------------
 1. Call `lv_curl_global_init()` once.
-2. Call `lv_curl_open()` with the URL, default headers, and authentication info to get an I32 reference.
-3. Start an async request with `lv_curl_async_get_start(reference, optional_headers, ...)` or `lv_curl_async_post_start(reference, optional_headers, ...)`.
+2. Call `lv_curl_open()` with the base URL, default headers, and authentication info to get an I32 reference.
+3. Start an async request with `lv_curl_async_get_start(reference, endpoint, optional_headers, ...)` or `lv_curl_async_post_start(reference, endpoint, optional_headers, ...)`.
 4. Poll `lv_curl_async_read_chunk()` repeatedly until it returns `LV_CURL_ERROR_ASYNC_COMPLETE`.
 5. Optionally check state with `lv_curl_async_get_state()`.
 6. Call `lv_curl_async_cancel()` to abort a running request.
@@ -84,12 +84,14 @@ Async polling usage
 Reference lifecycle
 -------------------
 `lv_curl_open()` stores:
-- URL
+- base URL
 - default headers, one per line
 - username/password for basic or negotiated libcurl authentication
 - bearer token, added as `Authorization: Bearer <token>`
 
-All sync calls and async start calls take the returned I32 reference plus optional request headers.
+All sync calls and async start calls take the returned I32 reference, an endpoint, plus optional request headers.
+Endpoints like `"items"` and `"/items"` are appended to the base URL.
+An empty endpoint uses the base URL as-is, and a full `http://` or `https://` endpoint overrides the base URL for that request.
 The request headers are appended after the default headers stored by `lv_curl_open()`.
 Pass an empty string when a specific request does not need extra headers.
 `lv_curl_get_header_templates()` returns common header templates; replace placeholder values before sending them.

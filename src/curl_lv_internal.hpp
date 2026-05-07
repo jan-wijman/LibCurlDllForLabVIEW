@@ -39,6 +39,7 @@ struct CurlConnection
 };
 
 std::vector<std::string> split_header_lines(const char* headers);
+std::string build_request_url(const std::string& base_url, const char* endpoint);
 int copy_c_string(const std::string& source, char* dest, int dest_size);
 int set_error_message(const std::string& source, char* error_buffer, int error_buffer_size);
 std::shared_ptr<CurlConnection> find_connection(int reference);
@@ -58,6 +59,7 @@ std::shared_ptr<AsyncRequest> find_async_request(int request_id);
 void start_async_request(
     int request_id,
     std::shared_ptr<CurlConnection> connection,
+    std::string request_url,
     std::vector<std::string> request_headers,
     const std::string& body,
     bool use_post);

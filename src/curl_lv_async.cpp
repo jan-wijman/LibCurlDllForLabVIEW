@@ -90,6 +90,7 @@ static int append_header_lines(struct curl_slist** header_list, const std::vecto
 void start_async_request(
     int request_id,
     std::shared_ptr<CurlConnection> connection,
+    std::string request_url,
     std::vector<std::string> request_headers,
     const std::string& body,
     bool use_post)
@@ -100,7 +101,7 @@ void start_async_request(
         return;
     }
 
-    std::thread worker([request, connection, request_headers, body, use_post]() {
+    std::thread worker([request, connection, request_url, request_headers, body, use_post]() {
         CURL* curl = curl_easy_init();
         if (!curl)
         {
@@ -154,7 +155,7 @@ void start_async_request(
             }
         }
 
-        curl_easy_setopt(curl, CURLOPT_URL, connection->url.c_str());
+        curl_easy_setopt(curl, CURLOPT_URL, request_url.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, async_write_callback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, request.get());
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
@@ -228,6 +229,7 @@ static int validate_async_buffer_args(char* buffer, int buffer_size, int* actual
 
 int LV_CURL_CALL lv_curl_async_get_start(
     int reference,
+    const char* endpoint,
     const char* headers,
     int* request_id,
     char* error_buffer,
@@ -274,7 +276,8 @@ int LV_CURL_CALL lv_curl_async_get_start(
         }
 
         std::vector<std::string> request_headers = split_header_lines(headers);
-        start_async_request(id, connection, request_headers, std::string(), false);
+        std::string request_url = build_request_url(connection->url, endpoint);
+        start_async_request(id, connection, request_url, request_headers, std::string(), false);
 
         *request_id = id;
         error_buffer[0] = '\0';
@@ -288,6 +291,7 @@ int LV_CURL_CALL lv_curl_async_get_start(
 
 int LV_CURL_CALL lv_curl_async_post_start(
     int reference,
+    const char* endpoint,
     const char* headers,
     const char* body,
     int* request_id,
@@ -335,7 +339,8 @@ int LV_CURL_CALL lv_curl_async_post_start(
         }
 
         std::vector<std::string> request_headers = split_header_lines(headers);
-        start_async_request(id, connection, request_headers, body ? std::string(body) : std::string(), true);
+        std::string request_url = build_request_url(connection->url, endpoint);
+        start_async_request(id, connection, request_url, request_headers, body ? std::string(body) : std::string(), true);
 
         *request_id = id;
         error_buffer[0] = '\0';
