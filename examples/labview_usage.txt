@@ -16,15 +16,11 @@ Parameters:
 - password: C String
 - bearer_token: C String
 - reference: I32*
-- error_buffer: C String
-- error_buffer_size: I32
 
 For closing a reference:
 Return type: I32
 Parameters:
 - reference: I32
-- error_buffer: C String
-- error_buffer_size: I32
 
 For getting common header templates:
 Return type: I32
@@ -32,8 +28,6 @@ Parameters:
 - headers_buffer: C String
 - headers_buffer_size: I32
 - actual_headers_size: I32*
-- error_buffer: C String
-- error_buffer_size: I32
 
 For sync request functions:
 Return type: I32
@@ -47,8 +41,6 @@ Parameters:
 - response_buffer_size: I32
 - actual_response_size: I32*
 - http_status_code: I32*
-- error_buffer: C String
-- error_buffer_size: I32
 
 For async start functions:
 - reference: I32
@@ -56,14 +48,20 @@ For async start functions:
 - headers: C String (optional request headers)
 - body: C String (POST only)
 - request_id: I32*
-- error_buffer: C String
-- error_buffer_size: I32
 
 For async polling:
 - chunk_buffer: C String
 - chunk_buffer_size: I32
 - actual_chunk_size: I32*
 - is_last_chunk: I32*
+
+For diagnostics:
+Return type: I32
+Function: lv_curl_get_latest_errors_info
+Parameters:
+- errors_buffer: C String
+- errors_buffer_size: I32
+- actual_errors_size: I32*
 
 Polling flow example
 --------------------
@@ -76,14 +74,19 @@ Polling flow example
    c. If return value is `LV_CURL_ERROR_ASYNC_NO_CHUNK`, wait briefly and retry.
    d. If return value is `LV_CURL_ERROR_ASYNC_COMPLETE`, the request finished and all data has been received.
 5. Optionally call `lv_curl_async_get_state()` to inspect the final state and HTTP status code.
-6. Call `lv_curl_close(reference, ...)`.
+6. Call `lv_curl_close(reference)`.
 7. Call `lv_curl_global_cleanup()` when your application exits.
 
 Buffer management
 -----------------
-- Allocate response and error buffers large enough for expected strings.
+- Allocate response, header-template, chunk, and diagnostic buffers large enough for expected strings.
 - If a buffer is too small, `LV_CURL_ERROR_BUFFER_TOO_SMALL` is returned.
-- The API returns the actual size of the output string in `actual_response_size`.
+- The API returns actual output sizes through the matching `actual_*_size` parameter.
+- Response and chunk buffers are binary-safe. Use `actual_response_size` or `actual_chunk_size` as the valid byte count.
+- The DLL appends a trailing NUL to response/chunk data only when there is spare buffer capacity.
+- For async chunks, a too-small buffer does not discard the chunk; allocate a larger buffer and retry.
+- Detailed diagnostic text is queued internally. Call `lv_curl_get_latest_errors_info()` after a non-success return code to copy and flush it.
+- `lv_curl_get_latest_errors_info()` does not flush the queue when the diagnostics buffer is too small, so you can allocate a larger buffer and retry.
 
 Header formatting
 -----------------

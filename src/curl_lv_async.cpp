@@ -109,6 +109,7 @@ void start_async_request(
             request->failed = true;
             request->state = LV_CURL_ASYNC_STATE_FAILED;
             request->error_message = "Unable to initialize libcurl.";
+            push_error_info("lv_curl_async_worker", request->error_message);
             request->cv.notify_all();
             return;
         }
@@ -122,6 +123,7 @@ void start_async_request(
             request->failed = true;
             request->state = LV_CURL_ASYNC_STATE_FAILED;
             request->error_message = "Failed to allocate libcurl header list.";
+            push_error_info("lv_curl_async_worker", request->error_message);
             request->cv.notify_all();
             return;
         }
@@ -135,6 +137,7 @@ void start_async_request(
             request->failed = true;
             request->state = LV_CURL_ASYNC_STATE_FAILED;
             request->error_message = "Failed to allocate libcurl header list.";
+            push_error_info("lv_curl_async_worker", request->error_message);
             request->cv.notify_all();
             return;
         }
@@ -150,6 +153,7 @@ void start_async_request(
                 request->failed = true;
                 request->state = LV_CURL_ASYNC_STATE_FAILED;
                 request->error_message = "Failed to allocate libcurl header list.";
+                push_error_info("lv_curl_async_worker", request->error_message);
                 request->cv.notify_all();
                 return;
             }
@@ -203,6 +207,7 @@ void start_async_request(
                 request->failed = true;
                 request->state = LV_CURL_ASYNC_STATE_FAILED;
                 request->error_message = curl_easy_strerror(result);
+                push_error_info("lv_curl_async_worker", request->error_message);
             }
             else
             {
@@ -218,11 +223,11 @@ void start_async_request(
     worker.detach();
 }
 
-static int validate_async_buffer_args(char* buffer, int buffer_size, int* actual_size, char* error_buffer, int error_buffer_size)
+static int validate_async_buffer_args(char* buffer, int buffer_size, int* actual_size)
 {
-    if (!buffer || buffer_size <= 0 || !actual_size || !error_buffer || error_buffer_size <= 0)
+    if (!buffer || buffer_size <= 0 || !actual_size)
     {
-        return LV_CURL_ERROR_INVALID_ARGUMENT;
+        return record_error_info(LV_CURL_ERROR_INVALID_ARGUMENT, "lv_curl_async_read_chunk", "Invalid argument.");
     }
     return LV_CURL_SUCCESS;
 }
@@ -231,38 +236,33 @@ int LV_CURL_CALL lv_curl_async_get_start(
     int reference,
     const char* endpoint,
     const char* headers,
-    int* request_id,
-    char* error_buffer,
-    int error_buffer_size)
+    int* request_id)
 {
     try
     {
-        if (reference <= 0 || !request_id || !error_buffer || error_buffer_size <= 0)
+        if (reference <= 0 || !request_id)
         {
-            return LV_CURL_ERROR_INVALID_ARGUMENT;
+            return record_error_info(LV_CURL_ERROR_INVALID_ARGUMENT, "lv_curl_async_get_start", "Invalid argument.");
         }
 
         std::shared_lock<std::shared_mutex> lifecycle_guard(g_lifecycle_mutex);
 
         if (!g_curl_global_initialized.load())
         {
-            set_error_message("curl_global_init has not been called.", error_buffer, error_buffer_size);
-            return LV_CURL_ERROR_INITIALIZATION;
+            return record_error_info(LV_CURL_ERROR_INITIALIZATION, "lv_curl_async_get_start", "curl_global_init has not been called.");
         }
 
         auto connection = find_connection(reference);
         if (!connection)
         {
-            set_error_message("Reference not found.", error_buffer, error_buffer_size);
-            return LV_CURL_ERROR_NOT_FOUND;
+            return record_error_info(LV_CURL_ERROR_NOT_FOUND, "lv_curl_async_get_start", "Reference not found.");
         }
 
         int id;
         int code = reserve_async_request_id(&id);
         if (code != LV_CURL_SUCCESS)
         {
-            set_error_message("Unable to reserve async request id.", error_buffer, error_buffer_size);
-            return code;
+            return record_error_info(code, "lv_curl_async_get_start", "Unable to reserve async request id.");
         }
 
         auto request = std::make_shared<AsyncRequest>();
@@ -280,12 +280,11 @@ int LV_CURL_CALL lv_curl_async_get_start(
         start_async_request(id, connection, request_url, request_headers, std::string(), false);
 
         *request_id = id;
-        error_buffer[0] = '\0';
         return LV_CURL_SUCCESS;
     }
     catch (...)
     {
-        return set_error_message("Unexpected exception in lv_curl_async_get_start.", error_buffer, error_buffer_size);
+        return record_error_info(LV_CURL_ERROR_INTERNAL, "lv_curl_async_get_start", "Unexpected exception.");
     }
 }
 
@@ -294,38 +293,33 @@ int LV_CURL_CALL lv_curl_async_post_start(
     const char* endpoint,
     const char* headers,
     const char* body,
-    int* request_id,
-    char* error_buffer,
-    int error_buffer_size)
+    int* request_id)
 {
     try
     {
-        if (reference <= 0 || !request_id || !error_buffer || error_buffer_size <= 0)
+        if (reference <= 0 || !request_id)
         {
-            return LV_CURL_ERROR_INVALID_ARGUMENT;
+            return record_error_info(LV_CURL_ERROR_INVALID_ARGUMENT, "lv_curl_async_post_start", "Invalid argument.");
         }
 
         std::shared_lock<std::shared_mutex> lifecycle_guard(g_lifecycle_mutex);
 
         if (!g_curl_global_initialized.load())
         {
-            set_error_message("curl_global_init has not been called.", error_buffer, error_buffer_size);
-            return LV_CURL_ERROR_INITIALIZATION;
+            return record_error_info(LV_CURL_ERROR_INITIALIZATION, "lv_curl_async_post_start", "curl_global_init has not been called.");
         }
 
         auto connection = find_connection(reference);
         if (!connection)
         {
-            set_error_message("Reference not found.", error_buffer, error_buffer_size);
-            return LV_CURL_ERROR_NOT_FOUND;
+            return record_error_info(LV_CURL_ERROR_NOT_FOUND, "lv_curl_async_post_start", "Reference not found.");
         }
 
         int id;
         int code = reserve_async_request_id(&id);
         if (code != LV_CURL_SUCCESS)
         {
-            set_error_message("Unable to reserve async request id.", error_buffer, error_buffer_size);
-            return code;
+            return record_error_info(code, "lv_curl_async_post_start", "Unable to reserve async request id.");
         }
 
         auto request = std::make_shared<AsyncRequest>();
@@ -343,12 +337,11 @@ int LV_CURL_CALL lv_curl_async_post_start(
         start_async_request(id, connection, request_url, request_headers, body ? std::string(body) : std::string(), true);
 
         *request_id = id;
-        error_buffer[0] = '\0';
         return LV_CURL_SUCCESS;
     }
     catch (...)
     {
-        return set_error_message("Unexpected exception in lv_curl_async_post_start.", error_buffer, error_buffer_size);
+        return record_error_info(LV_CURL_ERROR_INTERNAL, "lv_curl_async_post_start", "Unexpected exception.");
     }
 }
 
@@ -357,44 +350,46 @@ int LV_CURL_CALL lv_curl_async_read_chunk(
     char* chunk_buffer,
     int chunk_buffer_size,
     int* actual_chunk_size,
-    int* is_last_chunk,
-    char* error_buffer,
-    int error_buffer_size)
+    int* is_last_chunk)
 {
     try
     {
-        int validate_code = validate_async_buffer_args(chunk_buffer, chunk_buffer_size, actual_chunk_size, error_buffer, error_buffer_size);
+        int validate_code = validate_async_buffer_args(chunk_buffer, chunk_buffer_size, actual_chunk_size);
         if (validate_code != LV_CURL_SUCCESS)
         {
             return validate_code;
         }
 
+        if (!is_last_chunk)
+        {
+            return record_error_info(LV_CURL_ERROR_INVALID_ARGUMENT, "lv_curl_async_read_chunk", "Invalid argument.");
+        }
+
         auto request = find_async_request(request_id);
         if (!request)
         {
-            return set_error_message("Async request not found.", error_buffer, error_buffer_size);
+            return record_error_info(LV_CURL_ERROR_ASYNC_NOT_FOUND, "lv_curl_async_read_chunk", "Async request not found.");
         }
 
         std::unique_lock<std::mutex> guard(request->mutex);
         if (!request->chunk_queue.empty())
         {
-            std::string chunk = std::move(request->chunk_queue.front());
-            request->chunk_queue.pop();
-            guard.unlock();
+            const std::string& chunk = request->chunk_queue.front();
+            *actual_chunk_size = static_cast<int>(chunk.size());
 
-            if (static_cast<int>(chunk.size()) >= chunk_buffer_size)
+            if (static_cast<int>(chunk.size()) > chunk_buffer_size)
             {
-                set_error_message("Chunk buffer too small.", error_buffer, error_buffer_size);
-                return LV_CURL_ERROR_BUFFER_TOO_SMALL;
+                return record_error_info(LV_CURL_ERROR_BUFFER_TOO_SMALL, "lv_curl_async_read_chunk", "Chunk buffer too small.");
             }
 
             std::memcpy(chunk_buffer, chunk.data(), chunk.size());
-            chunk_buffer[chunk.size()] = '\0';
-            *actual_chunk_size = static_cast<int>(chunk.size());
+            if (static_cast<int>(chunk.size()) < chunk_buffer_size)
+            {
+                chunk_buffer[chunk.size()] = '\0';
+            }
+            request->chunk_queue.pop();
 
-            std::lock_guard<std::mutex> guard2(request->mutex);
             *is_last_chunk = (request->completed && request->chunk_queue.empty()) ? 1 : 0;
-            error_buffer[0] = '\0';
             return LV_CURL_SUCCESS;
         }
 
@@ -402,12 +397,12 @@ int LV_CURL_CALL lv_curl_async_read_chunk(
         {
             *actual_chunk_size = 0;
             *is_last_chunk = 0;
-            return set_error_message(request->error_message, error_buffer, error_buffer_size);
+            return record_error_info(LV_CURL_ERROR_ASYNC_FAILED, "lv_curl_async_read_chunk", request->error_message);
         }
 
         if (request->cancel_requested && request->chunk_queue.empty())
         {
-            return set_error_message("Async request cancelled.", error_buffer, error_buffer_size);
+            return record_error_info(LV_CURL_ERROR_CANCELLED, "lv_curl_async_read_chunk", "Async request cancelled.");
         }
 
         if (request->completed)
@@ -419,28 +414,26 @@ int LV_CURL_CALL lv_curl_async_read_chunk(
     }
     catch (...)
     {
-        return set_error_message("Unexpected exception in lv_curl_async_read_chunk.", error_buffer, error_buffer_size);
+        return record_error_info(LV_CURL_ERROR_INTERNAL, "lv_curl_async_read_chunk", "Unexpected exception.");
     }
 }
 
 int LV_CURL_CALL lv_curl_async_get_state(
     int request_id,
     int* state,
-    int* http_status_code,
-    char* error_buffer,
-    int error_buffer_size)
+    int* http_status_code)
 {
     try
     {
-        if (!state || !http_status_code || !error_buffer || error_buffer_size <= 0)
+        if (!state || !http_status_code)
         {
-            return LV_CURL_ERROR_INVALID_ARGUMENT;
+            return record_error_info(LV_CURL_ERROR_INVALID_ARGUMENT, "lv_curl_async_get_state", "Invalid argument.");
         }
 
         auto request = find_async_request(request_id);
         if (!request)
         {
-            return set_error_message("Async request not found.", error_buffer, error_buffer_size);
+            return record_error_info(LV_CURL_ERROR_ASYNC_NOT_FOUND, "lv_curl_async_get_state", "Async request not found.");
         }
 
         std::lock_guard<std::mutex> guard(request->mutex);
@@ -448,34 +441,30 @@ int LV_CURL_CALL lv_curl_async_get_state(
         *http_status_code = request->http_status_code;
         if (request->failed)
         {
-            return set_error_message(request->error_message, error_buffer, error_buffer_size);
+            return record_error_info(LV_CURL_ERROR_ASYNC_FAILED, "lv_curl_async_get_state", request->error_message);
         }
 
-        error_buffer[0] = '\0';
         return LV_CURL_SUCCESS;
     }
     catch (...)
     {
-        return set_error_message("Unexpected exception in lv_curl_async_get_state.", error_buffer, error_buffer_size);
+        return record_error_info(LV_CURL_ERROR_INTERNAL, "lv_curl_async_get_state", "Unexpected exception.");
     }
 }
 
-int LV_CURL_CALL lv_curl_async_cancel(
-    int request_id,
-    char* error_buffer,
-    int error_buffer_size)
+int LV_CURL_CALL lv_curl_async_cancel(int request_id)
 {
     try
     {
-        if (!error_buffer || error_buffer_size <= 0)
+        if (request_id <= 0)
         {
-            return LV_CURL_ERROR_INVALID_ARGUMENT;
+            return record_error_info(LV_CURL_ERROR_INVALID_ARGUMENT, "lv_curl_async_cancel", "Invalid argument.");
         }
 
         auto request = find_async_request(request_id);
         if (!request)
         {
-            return set_error_message("Async request not found.", error_buffer, error_buffer_size);
+            return record_error_info(LV_CURL_ERROR_ASYNC_NOT_FOUND, "lv_curl_async_cancel", "Async request not found.");
         }
 
         {
@@ -483,11 +472,10 @@ int LV_CURL_CALL lv_curl_async_cancel(
             request->cancel_requested = true;
         }
 
-        error_buffer[0] = '\0';
         return LV_CURL_SUCCESS;
     }
     catch (...)
     {
-        return set_error_message("Unexpected exception in lv_curl_async_cancel.", error_buffer, error_buffer_size);
+        return record_error_info(LV_CURL_ERROR_INTERNAL, "lv_curl_async_cancel", "Unexpected exception.");
     }
 }

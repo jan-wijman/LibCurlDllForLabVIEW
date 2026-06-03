@@ -9,7 +9,8 @@ Supported features
 - C++17 with MinGW-w64 g++
 - Windows shared library (`curl_lv.dll`)
 - `extern "C"` exports with `__cdecl` calling convention
-- Stable integer error codes and caller-supplied buffers
+- Stable integer error codes and caller-supplied output buffers
+- Shared lossy diagnostics buffer readable with `lv_curl_get_latest_errors_info()`
 - No C++/STL or libcurl types in the public API
 - Open/close reference lifecycle for URL and authentication reuse
 - Generic sync request plus convenience wrappers
@@ -68,6 +69,9 @@ LabVIEW notes
 - The wrapper functions use `__cdecl` convention.
 - All string outputs require caller-managed buffers plus buffer sizes.
 - Validate and size buffers before calling.
+- HTTP response and async chunk buffers are binary-safe. Use the returned `actual_*_size` value as the byte count.
+- Function calls return stable integer error codes. Detailed diagnostic text is collected in an internal lossy queue.
+- Call `lv_curl_get_latest_errors_info()` to read and flush queued diagnostic text.
 - `lv_curl_get_header_templates()` returns common HTTP header templates for LabVIEW UI lists or examples.
 
 Async polling usage
@@ -78,7 +82,7 @@ Async polling usage
 4. Poll `lv_curl_async_read_chunk()` repeatedly until it returns `LV_CURL_ERROR_ASYNC_COMPLETE`.
 5. Optionally check state with `lv_curl_async_get_state()`.
 6. Call `lv_curl_async_cancel()` to abort a running request.
-7. Call `lv_curl_close(reference, ...)` when the URL/auth context is no longer needed.
+7. Call `lv_curl_close(reference)` when the URL/auth context is no longer needed.
 8. Call `lv_curl_global_cleanup()` when the app shuts down.
 
 Reference lifecycle
@@ -96,6 +100,22 @@ The request headers are appended after the default headers stored by `lv_curl_op
 Pass an empty string when a specific request does not need extra headers.
 `lv_curl_get_header_templates()` returns common header templates; replace placeholder values before sending them.
 `lv_curl_close()` removes the reference. Closing fails with `LV_CURL_ERROR_BUSY` while an async request for that reference is still running.
+
+Binary response data
+--------------------
+Synchronous response buffers and asynchronous chunk buffers may contain binary data, including embedded NUL bytes.
+The DLL copies exactly the received bytes and writes a trailing NUL only when the caller buffer has spare capacity.
+Always use `actual_response_size` or `actual_chunk_size` as the number of valid bytes.
+If the buffer is exactly the same size as the payload, the call succeeds without adding a trailing NUL.
+For async chunks, `LV_CURL_ERROR_BUFFER_TOO_SMALL` leaves the chunk queued so the caller can retry with a larger buffer.
+
+Diagnostics
+-----------
+Detailed error information is stored in a process-wide lossy queue with about 8 KB of text capacity.
+The queue keeps the newest messages and drops oldest text when full.
+Call `lv_curl_get_latest_errors_info(errors_buffer, errors_buffer_size, actual_errors_size)` after a non-success return code to copy the queued text.
+The call flushes the queue only when the caller buffer is large enough.
+If it returns `LV_CURL_ERROR_BUFFER_TOO_SMALL`, allocate a larger buffer using `actual_errors_size` and call again.
 
 Project files
 -------------

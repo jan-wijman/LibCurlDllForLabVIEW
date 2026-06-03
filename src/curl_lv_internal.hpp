@@ -41,7 +41,9 @@ struct CurlConnection
 std::vector<std::string> split_header_lines(const char* headers);
 std::string build_request_url(const std::string& base_url, const char* endpoint);
 int copy_c_string(const std::string& source, char* dest, int dest_size);
-int set_error_message(const std::string& source, char* error_buffer, int error_buffer_size);
+int copy_binary_data(const std::string& source, char* dest, int dest_size);
+void push_error_info(const std::string& function_name, const std::string& message);
+int record_error_info(int error_code, const std::string& function_name, const std::string& message);
 std::shared_ptr<CurlConnection> find_connection(int reference);
 
 extern std::atomic<bool> g_curl_global_initialized;
