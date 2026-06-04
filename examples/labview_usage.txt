@@ -22,6 +22,15 @@ Return type: I32
 Parameters:
 - reference: I32
 
+For converting an error code to text:
+Return type: I32
+Function: lv_curl_error_string
+Parameters:
+- error_code: I32
+- error_string_buffer: C String
+- error_string_buffer_size: I32
+- actual_error_string_size: I32*
+
 For getting common header templates:
 Return type: I32
 Parameters:
@@ -76,6 +85,20 @@ Polling flow example
 5. Optionally call `lv_curl_async_get_state()` to inspect the final state and HTTP status code.
 6. Call `lv_curl_close(reference)`.
 7. Call `lv_curl_global_cleanup()` when your application exits.
+
+Asynchronous POST polling flow
+------------------------------
+1. Call `lv_curl_async_post_start(reference, endpoint, headers, body, request_id)`.
+2. Use a JSON/text body for REST APIs, for example `{"model":"llama3.2","prompt":"Hello","stream":true}`.
+3. Store the returned `request_id`.
+4. Repeatedly call `lv_curl_async_read_chunk(request_id, chunk_buffer, chunk_buffer_size, actual_chunk_size, is_last_chunk)`.
+5. If the return value is `LV_CURL_SUCCESS`, append exactly `actual_chunk_size` bytes from `chunk_buffer` to your response string or byte array.
+6. If `is_last_chunk` is `1`, that chunk is the final chunk returned with data.
+7. If the return value is `LV_CURL_ERROR_ASYNC_NO_CHUNK`, wait briefly and poll again.
+8. If the return value is `LV_CURL_ERROR_ASYNC_COMPLETE`, no chunk was returned in that call and all queued data has already been read.
+9. If the return value is `LV_CURL_ERROR_BUFFER_TOO_SMALL`, allocate a larger `chunk_buffer` and call `lv_curl_async_read_chunk()` again with the same `request_id`.
+10. Optionally call `lv_curl_async_get_state(request_id, state, http_status_code)` after completion to read the final HTTP status code.
+11. If any call returns an error code, call `lv_curl_get_latest_errors_info()` to read and flush the detailed diagnostics.
 
 Buffer management
 -----------------

@@ -34,13 +34,17 @@ extern "C" {
 #define LV_CURL_ASYNC_STATE_CANCELLED 3
 #define LV_CURL_ASYNC_STATE_FAILED 4
 
-#define LV_CURL_API extern "C" __declspec(dllexport)
+#define LV_CURL_API __declspec(dllexport)
 #define LV_CURL_CALL __cdecl
 
 // Lifecycle
 LV_CURL_API int LV_CURL_CALL lv_curl_global_init(void);
 LV_CURL_API int LV_CURL_CALL lv_curl_global_cleanup(void);
-LV_CURL_API const char* LV_CURL_CALL lv_curl_error_string(int error_code);
+LV_CURL_API int LV_CURL_CALL lv_curl_error_string(
+    int error_code,
+    char* error_string_buffer,
+    int error_string_buffer_size,
+    int* actual_error_string_size);
 LV_CURL_API int LV_CURL_CALL lv_curl_get_latest_errors_info(
     char* errors_buffer,
     int errors_buffer_size,

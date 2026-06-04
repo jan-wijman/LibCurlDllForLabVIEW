@@ -464,7 +464,7 @@ int LV_CURL_CALL lv_curl_global_cleanup(void)
     }
 }
 
-const char* LV_CURL_CALL lv_curl_error_string(int error_code)
+static const char* error_string_literal(int error_code)
 {
     switch (error_code)
     {
@@ -483,6 +483,29 @@ const char* LV_CURL_CALL lv_curl_error_string(int error_code)
         case LV_CURL_ERROR_ASYNC_FAILED: return "Async request failed";
         default: return "Unknown error code";
     }
+}
+
+int LV_CURL_CALL lv_curl_error_string(
+    int error_code,
+    char* error_string_buffer,
+    int error_string_buffer_size,
+    int* actual_error_string_size)
+{
+    if (!error_string_buffer || error_string_buffer_size <= 0 || !actual_error_string_size)
+    {
+        return LV_CURL_ERROR_INVALID_ARGUMENT;
+    }
+
+    std::string error_string(error_string_literal(error_code));
+    *actual_error_string_size = static_cast<int>(error_string.size());
+
+    int copy_result = copy_c_string(error_string, error_string_buffer, error_string_buffer_size);
+    if (copy_result != LV_CURL_SUCCESS)
+    {
+        return copy_result;
+    }
+
+    return LV_CURL_SUCCESS;
 }
 
 int LV_CURL_CALL lv_curl_get_latest_errors_info(
