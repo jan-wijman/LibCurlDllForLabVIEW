@@ -51,6 +51,20 @@ Parameters:
 - actual_response_size: I32*
 - http_status_code: I32*
 
+For sync multipart POST:
+Return type: I32
+Function: lv_curl_post_multipart
+Parameters:
+- reference: I32
+- endpoint: C String
+- headers: C String (optional request headers)
+- text_fields: C String (one name=value entry per line)
+- file_fields: C String (one name=path entry per line)
+- response_buffer: C String
+- response_buffer_size: I32
+- actual_response_size: I32*
+- http_status_code: I32*
+
 For async start functions:
 - reference: I32
 - endpoint: C String
@@ -116,10 +130,21 @@ Header formatting
 - Pass default headers to `lv_curl_open()` as a single string with one header per line.
 - Pass optional request headers to sync calls and async start calls the same way.
 - Pass an empty string when a specific request does not need extra headers.
+- For `lv_curl_post_multipart()`, do not pass `Content-Type: multipart/form-data`; libcurl adds the boundary automatically.
 - `lv_curl_get_header_templates()` returns common header templates as one string with one header per line.
 - The templates are examples; replace placeholder values like `<token>` and `<key>` before using them.
 - Example:
   "Accept: application/json\r\nUser-Agent: LabVIEW Wrapper\r\n"
+
+Multipart POST formatting
+-------------------------
+- `text_fields` uses one `name=value` entry per line.
+- `file_fields` uses one `name=path` entry per line.
+- Either string may be empty, but at least one field is required.
+- Example text fields:
+  "description=Test upload\r\ncategory=logs\r\n"
+- Example file fields:
+  "file=C:\temp\report.txt\r\nimage=C:\temp\screenshot.png\r\n"
 
 Endpoint formatting
 -------------------

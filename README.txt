@@ -14,6 +14,7 @@ Supported features
 - No C++/STL or libcurl types in the public API
 - Open/close reference lifecycle for URL and authentication reuse
 - Generic sync request plus convenience wrappers
+- Sync multipart/form-data POST with text fields and file uploads
 - Async GET and POST with worker threads and chunk polling
 - Safe libcurl global init/cleanup
 
@@ -100,6 +101,26 @@ The request headers are appended after the default headers stored by `lv_curl_op
 Pass an empty string when a specific request does not need extra headers.
 `lv_curl_get_header_templates()` returns common header templates; replace placeholder values before sending them.
 `lv_curl_close()` removes the reference. Closing fails with `LV_CURL_ERROR_BUSY` while an async request for that reference is still running.
+
+Multipart POST
+--------------
+`lv_curl_post_multipart()` sends a synchronous `multipart/form-data` POST.
+Pass text fields as one `name=value` entry per line in `text_fields`.
+Pass file fields as one `name=path` entry per line in `file_fields`.
+Either string may be empty, but at least one text or file field is required.
+
+Example:
+
+text_fields:
+description=Test upload
+category=logs
+
+file_fields:
+file=C:\temp\report.txt
+image=C:\temp\screenshot.png
+
+Do not add a manual `Content-Type: multipart/form-data` header for this call.
+Libcurl generates the multipart boundary automatically.
 
 Binary response data
 --------------------

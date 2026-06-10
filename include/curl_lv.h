@@ -98,6 +98,17 @@ LV_CURL_API int LV_CURL_CALL lv_curl_post(
     int* actual_response_size,
     int* http_status_code);
 
+LV_CURL_API int LV_CURL_CALL lv_curl_post_multipart(
+    int reference,
+    const char* endpoint,
+    const char* headers,
+    const char* text_fields,
+    const char* file_fields,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code);
+
 LV_CURL_API int LV_CURL_CALL lv_curl_put(
     int reference,
     const char* endpoint,

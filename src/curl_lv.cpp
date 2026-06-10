@@ -5,6 +5,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 std::atomic<bool> g_curl_global_initialized{false};
@@ -232,6 +233,41 @@ static int append_header_lines(struct curl_slist** header_list, const std::vecto
     return LV_CURL_SUCCESS;
 }
 
+static int parse_key_value_lines(
+    const char* lines,
+    std::vector<std::pair<std::string, std::string>>& fields,
+    const std::string& function_name,
+    const std::string& value_name,
+    bool allow_empty_value)
+{
+    std::vector<std::string> field_lines = split_header_lines(lines);
+    for (const auto& line : field_lines)
+    {
+        size_t separator = line.find('=');
+        if (separator == std::string::npos || separator == 0)
+        {
+            return record_error_info(
+                LV_CURL_ERROR_INVALID_ARGUMENT,
+                function_name,
+                value_name + " must use one name=value entry per line.");
+        }
+
+        std::string name = line.substr(0, separator);
+        std::string value = line.substr(separator + 1);
+        if (!allow_empty_value && value.empty())
+        {
+            return record_error_info(
+                LV_CURL_ERROR_INVALID_ARGUMENT,
+                function_name,
+                value_name + " contains an empty value.");
+        }
+
+        fields.emplace_back(std::move(name), std::move(value));
+    }
+
+    return LV_CURL_SUCCESS;
+}
+
 static int configure_connection(
     CURL* curl,
     const CurlConnection& connection,
@@ -267,6 +303,163 @@ static int configure_connection(
     {
         curl_easy_setopt(curl, CURLOPT_USERNAME, connection.username.c_str());
         curl_easy_setopt(curl, CURLOPT_PASSWORD, connection.password.c_str());
+    }
+
+    return LV_CURL_SUCCESS;
+}
+
+static int internal_curl_post_multipart(
+    int reference,
+    const char* endpoint,
+    const char* headers,
+    const char* text_fields,
+    const char* file_fields,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code)
+{
+    static const std::string function_name = "lv_curl_post_multipart";
+
+    if (reference <= 0 || !response_buffer || response_buffer_size <= 0 || !actual_response_size || !http_status_code)
+    {
+        return record_error_info(LV_CURL_ERROR_INVALID_ARGUMENT, function_name, "Invalid argument.");
+    }
+
+    std::vector<std::pair<std::string, std::string>> parsed_text_fields;
+    std::vector<std::pair<std::string, std::string>> parsed_file_fields;
+
+    int parse_result = parse_key_value_lines(text_fields, parsed_text_fields, function_name, "Text fields", true);
+    if (parse_result != LV_CURL_SUCCESS)
+    {
+        return parse_result;
+    }
+
+    parse_result = parse_key_value_lines(file_fields, parsed_file_fields, function_name, "File fields", false);
+    if (parse_result != LV_CURL_SUCCESS)
+    {
+        return parse_result;
+    }
+
+    if (parsed_text_fields.empty() && parsed_file_fields.empty())
+    {
+        return record_error_info(LV_CURL_ERROR_INVALID_ARGUMENT, function_name, "At least one multipart field is required.");
+    }
+
+    std::shared_lock<std::shared_mutex> lifecycle_guard(g_lifecycle_mutex);
+
+    if (!g_curl_global_initialized.load())
+    {
+        return record_error_info(LV_CURL_ERROR_INITIALIZATION, function_name, "curl_global_init has not been called.");
+    }
+
+    auto connection = find_connection(reference);
+    if (!connection)
+    {
+        return record_error_info(LV_CURL_ERROR_NOT_FOUND, function_name, "Reference not found.");
+    }
+
+    CURL* curl = curl_easy_init();
+    if (!curl)
+    {
+        return record_error_info(LV_CURL_ERROR_INITIALIZATION, function_name, "Unable to initialize libcurl.");
+    }
+
+    std::string response_data;
+    struct curl_slist* header_list = nullptr;
+    curl_mime* form = nullptr;
+    std::string request_url = build_request_url(connection->url, endpoint);
+    std::vector<std::string> request_headers = split_header_lines(headers);
+    int configure_result = configure_connection(curl, *connection, request_url, request_headers, &header_list);
+    if (configure_result != LV_CURL_SUCCESS)
+    {
+        curl_slist_free_all(header_list);
+        curl_easy_cleanup(curl);
+        return record_error_info(configure_result, function_name, "Failed to allocate libcurl header list.");
+    }
+
+    form = curl_mime_init(curl);
+    if (!form)
+    {
+        curl_slist_free_all(header_list);
+        curl_easy_cleanup(curl);
+        return record_error_info(LV_CURL_ERROR_INITIALIZATION, function_name, "Unable to initialize multipart form.");
+    }
+
+    for (const auto& field : parsed_text_fields)
+    {
+        curl_mimepart* part = curl_mime_addpart(form);
+        if (!part)
+        {
+            curl_mime_free(form);
+            curl_slist_free_all(header_list);
+            curl_easy_cleanup(curl);
+            return record_error_info(LV_CURL_ERROR_INITIALIZATION, function_name, "Unable to add multipart text field.");
+        }
+
+        CURLcode name_result = curl_mime_name(part, field.first.c_str());
+        CURLcode data_result = curl_mime_data(part, field.second.c_str(), CURL_ZERO_TERMINATED);
+        if (name_result != CURLE_OK || data_result != CURLE_OK)
+        {
+            curl_mime_free(form);
+            curl_slist_free_all(header_list);
+            curl_easy_cleanup(curl);
+            return record_error_info(LV_CURL_ERROR_CURL, function_name, "Unable to configure multipart text field.");
+        }
+    }
+
+    for (const auto& field : parsed_file_fields)
+    {
+        curl_mimepart* part = curl_mime_addpart(form);
+        if (!part)
+        {
+            curl_mime_free(form);
+            curl_slist_free_all(header_list);
+            curl_easy_cleanup(curl);
+            return record_error_info(LV_CURL_ERROR_INITIALIZATION, function_name, "Unable to add multipart file field.");
+        }
+
+        CURLcode name_result = curl_mime_name(part, field.first.c_str());
+        CURLcode file_result = curl_mime_filedata(part, field.second.c_str());
+        if (name_result != CURLE_OK || file_result != CURLE_OK)
+        {
+            curl_mime_free(form);
+            curl_slist_free_all(header_list);
+            curl_easy_cleanup(curl);
+            return record_error_info(LV_CURL_ERROR_CURL, function_name, "Unable to configure multipart file field.");
+        }
+    }
+
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, sync_write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_MIMEPOST, form);
+
+    CURLcode result = curl_easy_perform(curl);
+    if (result != CURLE_OK)
+    {
+        std::string error_message = curl_easy_strerror(result);
+        curl_mime_free(form);
+        curl_slist_free_all(header_list);
+        curl_easy_cleanup(curl);
+        int code = curl_to_error_code(result);
+        return record_error_info(code, function_name, error_message);
+    }
+
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, http_status_code);
+    curl_mime_free(form);
+    curl_slist_free_all(header_list);
+    curl_easy_cleanup(curl);
+
+    *actual_response_size = static_cast<int>(response_data.size());
+
+    int copy_result = copy_binary_data(response_data, response_buffer, response_buffer_size);
+    if (copy_result != LV_CURL_SUCCESS)
+    {
+        return record_error_info(LV_CURL_ERROR_BUFFER_TOO_SMALL, function_name, "Response buffer too small.");
     }
 
     return LV_CURL_SUCCESS;
@@ -721,6 +914,29 @@ int LV_CURL_CALL lv_curl_post(
     return lv_curl_request(LV_CURL_METHOD_POST, reference, endpoint, headers, body,
         response_buffer, response_buffer_size, actual_response_size,
         http_status_code);
+}
+
+int LV_CURL_CALL lv_curl_post_multipart(
+    int reference,
+    const char* endpoint,
+    const char* headers,
+    const char* text_fields,
+    const char* file_fields,
+    char* response_buffer,
+    int response_buffer_size,
+    int* actual_response_size,
+    int* http_status_code)
+{
+    try
+    {
+        return internal_curl_post_multipart(reference, endpoint, headers, text_fields,
+            file_fields, response_buffer, response_buffer_size, actual_response_size,
+            http_status_code);
+    }
+    catch (...)
+    {
+        return record_error_info(LV_CURL_ERROR_INTERNAL, "lv_curl_post_multipart", "Unexpected exception.");
+    }
 }
 
 int LV_CURL_CALL lv_curl_put(
