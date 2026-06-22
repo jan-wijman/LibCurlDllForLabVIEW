@@ -4,7 +4,7 @@
 extern "C" {
 #endif
 
-// Stable error codes
+// Stable error codes. These integer values are part of the LabVIEW ABI.
 #define LV_CURL_SUCCESS 0
 #define LV_CURL_ERROR_INVALID_ARGUMENT 1
 #define LV_CURL_ERROR_INITIALIZATION 2
@@ -183,6 +183,11 @@ LV_CURL_API int LV_CURL_CALL lv_curl_async_get_state(
     int* http_status_code);
 
 LV_CURL_API int LV_CURL_CALL lv_curl_async_cancel(
+    int request_id);
+
+// Releases a completed, failed, or cancelled async request and its queued data.
+// Returns LV_CURL_ERROR_BUSY if the request is still running.
+LV_CURL_API int LV_CURL_CALL lv_curl_async_release(
     int request_id);
 
 #ifdef __cplusplus

@@ -649,6 +649,10 @@ int LV_CURL_CALL lv_curl_global_cleanup(void)
             std::lock_guard<std::mutex> guard(g_connection_mutex);
             g_connections.clear();
         }
+        {
+            std::lock_guard<std::mutex> guard(g_async_mutex);
+            g_async_requests.clear();
+        }
         return LV_CURL_SUCCESS;
     }
     catch (...)

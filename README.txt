@@ -15,7 +15,7 @@ Supported features
 - Open/close reference lifecycle for URL and authentication reuse
 - Generic sync request plus convenience wrappers
 - Sync multipart/form-data POST with text fields and file uploads
-- Async GET and POST with worker threads and chunk polling
+- Async GET and POST with worker threads, chunk polling, and explicit request release
 - Safe libcurl global init/cleanup
 
 Build instructions
@@ -83,8 +83,9 @@ Async polling usage
 4. Poll `lv_curl_async_read_chunk()` repeatedly until it returns `LV_CURL_ERROR_ASYNC_COMPLETE`.
 5. Optionally check state with `lv_curl_async_get_state()`.
 6. Call `lv_curl_async_cancel()` to abort a running request.
-7. Call `lv_curl_close(reference)` when the URL/auth context is no longer needed.
-8. Call `lv_curl_global_cleanup()` when the app shuts down.
+7. Call `lv_curl_async_release(request_id)` after the async request is complete, failed, or cancelled. This frees queued chunks and request state.
+8. Call `lv_curl_close(reference)` when the URL/auth context is no longer needed.
+9. Call `lv_curl_global_cleanup()` when the app shuts down.
 
 Reference lifecycle
 -------------------
@@ -100,7 +101,7 @@ An empty endpoint uses the base URL as-is, and a full `http://` or `https://` en
 The request headers are appended after the default headers stored by `lv_curl_open()`.
 Pass an empty string when a specific request does not need extra headers.
 `lv_curl_get_header_templates()` returns common header templates; replace placeholder values before sending them.
-`lv_curl_close()` removes the reference. Closing fails with `LV_CURL_ERROR_BUSY` while an async request for that reference is still running.
+`lv_curl_close()` removes the reference. Closing fails with `LV_CURL_ERROR_BUSY` while an async request for that reference is still running. Completed async request IDs remain valid until `lv_curl_async_release()` or `lv_curl_global_cleanup()` frees them.
 
 Multipart POST
 --------------

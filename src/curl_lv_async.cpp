@@ -365,6 +365,9 @@ int LV_CURL_CALL lv_curl_async_read_chunk(
             return record_error_info(LV_CURL_ERROR_INVALID_ARGUMENT, "lv_curl_async_read_chunk", "Invalid argument.");
         }
 
+        *actual_chunk_size = 0;
+        *is_last_chunk = 0;
+
         auto request = find_async_request(request_id);
         if (!request)
         {
@@ -430,6 +433,9 @@ int LV_CURL_CALL lv_curl_async_get_state(
             return record_error_info(LV_CURL_ERROR_INVALID_ARGUMENT, "lv_curl_async_get_state", "Invalid argument.");
         }
 
+        *state = 0;
+        *http_status_code = 0;
+
         auto request = find_async_request(request_id);
         if (!request)
         {
@@ -477,5 +483,57 @@ int LV_CURL_CALL lv_curl_async_cancel(int request_id)
     catch (...)
     {
         return record_error_info(LV_CURL_ERROR_INTERNAL, "lv_curl_async_cancel", "Unexpected exception.");
+    }
+}
+
+int LV_CURL_CALL lv_curl_async_release(int request_id)
+{
+    try
+    {
+        if (request_id <= 0)
+        {
+            return record_error_info(LV_CURL_ERROR_INVALID_ARGUMENT, "lv_curl_async_release", "Invalid argument.");
+        }
+
+        std::shared_ptr<AsyncRequest> request;
+        {
+            std::lock_guard<std::mutex> guard(g_async_mutex);
+            auto it = g_async_requests.find(request_id);
+            if (it == g_async_requests.end())
+            {
+                return record_error_info(LV_CURL_ERROR_ASYNC_NOT_FOUND, "lv_curl_async_release", "Async request not found.");
+            }
+            request = it->second;
+        }
+
+        {
+            std::lock_guard<std::mutex> request_guard(request->mutex);
+            if (request->state == LV_CURL_ASYNC_STATE_RUNNING)
+            {
+                return record_error_info(LV_CURL_ERROR_BUSY, "lv_curl_async_release", "Async request is still running.");
+            }
+        }
+
+        std::lock_guard<std::mutex> guard(g_async_mutex);
+        auto it = g_async_requests.find(request_id);
+        if (it == g_async_requests.end())
+        {
+            return record_error_info(LV_CURL_ERROR_ASYNC_NOT_FOUND, "lv_curl_async_release", "Async request not found.");
+        }
+
+        {
+            std::lock_guard<std::mutex> request_guard(it->second->mutex);
+            if (it->second->state == LV_CURL_ASYNC_STATE_RUNNING)
+            {
+                return record_error_info(LV_CURL_ERROR_BUSY, "lv_curl_async_release", "Async request is still running.");
+            }
+        }
+
+        g_async_requests.erase(it);
+        return LV_CURL_SUCCESS;
+    }
+    catch (...)
+    {
+        return record_error_info(LV_CURL_ERROR_INTERNAL, "lv_curl_async_release", "Unexpected exception.");
     }
 }
